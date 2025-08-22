@@ -1,63 +1,74 @@
-
 import os
 import random
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 
-from video_processor import VideoProcessor
-from fact_generator import FactGenerator
-from youtube_uploader import YouTubeUploader
-from utils import pick_random_file, load_config
+#from video_processor import VideoProcessor
+#from fact_generator import FactGenerator
+#from youtube_uploader import YouTubeUploader
+from utils import pick_random_file, load_config, load_used_videos, save_used_video, get_unused_videos
+from dropbox_sync import DropboxVideoFetcher
 
-config = load_config("config.json")
-logging.basicConfig(
-    filename="logs/birdtube.log",
-    level=logging.INFO,
-    format="%(asctime)s — %(levelname)s — %(message)s"
-)
 
-species_dirs = list(Path("videos").glob("*"))
-if not species_dirs:
-    logging.error("No species folders found in /videos")
-    exit()
+def get_available_videos(videos_dir):
+    """Get all available video files organized by species."""
+    available_videos = {}
+    species_dirs = list(Path(videos_dir).glob("*"))
 
-species_folder = random.choice(species_dirs)
-species_name = species_folder.name
-video_path = pick_random_file(species_folder, exts=[".mp4"])
-music_path = pick_random_file("music", exts=[".mp3"])
+    for species_folder in species_dirs:
+        if species_folder.is_dir():
+            video_files = list(species_folder.glob("*.mp4"))
+            if video_files:
+                available_videos[species_folder.name] = video_files
 
-if not video_path or not music_path:
-    logging.error("Missing video or music file.")
-    exit()
+    return available_videos
 
-logging.info(f"Selected {video_path} for species {species_name}")
+def archive_video(video_path, archive_dir="archived_videos"):
+    """Move used video to archive directory maintaining species structure."""
+    video_path = Path(video_path)
+    species_name = video_path.parent.name
 
-fact_gen = FactGenerator("facts/facts.json", config["openai_api_key"])
-fact_text = fact_gen.get_fact(species_name)
-logging.info(f"Generated fact: {fact_text}")
+    archive_species_dir = Path(archive_dir) / species_name
+    archive_species_dir.mkdir(parents=True, exist_ok=True)
 
-output_path = f"output/{species_name}_{datetime.now().strftime('%Y%m%d')}.mp4"
-processor = VideoProcessor()
-final_video = processor.process_video(
-    video_path=str(video_path),
-    text_overlay=fact_text,
-    music_path=str(music_path),
-    output_path=output_path
-)
+    archived_path = archive_species_dir / video_path.name
+    shutil.move(str(video_path), str(archived_path))
+    logging.info(f"Archived video: {video_path} -> {archived_path}")
 
-if not final_video:
-    logging.error("Video processing failed.")
-    exit()
+def main():
+    config = load_config("config.json")
+    logging.basicConfig(
+        filename="logs/birdtube.log",
+        level=logging.INFO,
+        format="%(asctime)s — %(levelname)s — %(message)s"
+    )
 
-uploader = YouTubeUploader("client_secrets.json")
-video_title = f"Amazing {species_name} Fact 🐦"
-video_description = f"Enjoy this fascinating fact about the {species_name}. Daily AI bird facts powered by automation!"
+    fetcher = DropboxVideoFetcher(
+        access_token=config.get("dropbox_access_token"),
+        refresh_token=config.get("dropbox_refresh_token"),
+        app_key=config.get("dropbox_app_key"),
+        app_secret=config.get("dropbox_app_secret"),
+        dropbox_root="/BirdVideos",
+        local_root="videos",
+        modified_within_days=1
+    )
+    #fetcher.sync_videos()
 
-uploader.upload(
-    file_path=final_video,
-    title=video_title,
-    description=video_description,
-    tags=["birds", species_name, "nature", "wildlife", "AI"]
-)
-logging.info("Video uploaded successfully.")
+    # Get all available videos
+    available_videos = get_available_videos("videos")
+    if not available_videos:
+        logging.error("No videos available for processing.")
+        return
+
+    # Randomly select a species that has videos
+    species_name = random.choice(list(available_videos.keys()))
+    Bird_Type = species_name.split("_")[0]
+    Bird_Count = species_name.split("_")[1]
+    video_path = random.choice(available_videos[species_name])
+    logging.info(f"Selected {video_path} for species {species_name}")
+
+
+if __name__ == "__main__":
+    main()

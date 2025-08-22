@@ -1,6 +1,7 @@
 
 import json
 import openai
+import random
 
 class FactGenerator:
     def __init__(self, fact_db_path, api_key):
